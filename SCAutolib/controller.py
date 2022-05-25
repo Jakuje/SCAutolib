@@ -18,6 +18,10 @@ class Controller:
 
     def __int__(self, config: Union[Path, str], params: []):
         # Parse config file
+        with open(config, "r") as file:
+            self.lib_conf = yaml.load(file, Loader=yaml.FullLoader)
+            assert self.lib_conf, "Data are not loaded correctly."
+        self._check_required_fields()
         # Validate values in config
 
         # Check params
@@ -84,3 +88,21 @@ class Controller:
 
     def cleanup(self):
         ...
+
+    def _check_required_fields(self):
+        """
+        Check if all required fields are present in the config file. Warn user
+        if some fields are missing.
+        """
+        result = True
+        fields = ("root_passwd", "ca_dir", "ipa_server_root",
+                  "ipa_server_hostname", "ipa_client_hostname", "ipa_domain",
+                  "ipa_realm", "ipa_server_admin_passwd", "local_user", "ipa_user")
+        config_fields = self.lib_conf.keys()
+        for f in fields:
+            if f not in config_fields:
+                logger.warning(f"Field {f} is not present in the config.")
+                result = False
+        if result:
+            logger.info("Configuration file is OK.")
+        return result

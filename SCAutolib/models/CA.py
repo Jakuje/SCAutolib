@@ -61,28 +61,28 @@ class CA:
 class LocalCA(CA):
     template = Path(TEMPLATES_DIR, "ca.cnf")
 
-    def __init__(self, root_dir: Path = Path("/etc/SCAutolib/ca")):
+    def __init__(self, dir: Path = Path("/etc/SCAutolib/ca")):
         """
         Class for local CA. Initialize required attributes, real setup is made
         by LocalCA.setup() method
 
-        :param root_dir: Path to root directory of the CA. By default, is in
-                         /etc/SCAutolib/ca
+        :param dir: Path to root directory of the CA. By default, is in
+            /etc/SCAutolib/ca
         :type: Path
         """
-        self.root_dir: Path = root_dir
-        self._conf_dir: Path = Path(root_dir, "conf")
-        self._newcerts: Path = Path(root_dir, "newcerts")
-        self._certs: Path = Path(root_dir, "certs")
-        self._crl: Path = Path(root_dir, "crl", "root.pem")
+        self.root_dir: Path = dir
+        self._conf_dir: Path = Path(dir, "conf")
+        self._newcerts: Path = Path(dir, "newcerts")
+        self._certs: Path = Path(dir, "certs")
+        self._crl: Path = Path(dir, "crl", "root.pem")
         self._ca_pki_db: Path = Path("/etc/sssd/pki/sssd_auth_ca_db.pem")
 
         self._ca_cnf: Path = Path(self._conf_dir, "ca.cnf")
-        self._ca_cert: Path = Path(root_dir, "rootCA.pem")
-        self._ca_key: Path = Path(root_dir, "rootCA.key")
+        self._ca_cert: Path = Path(dir, "rootCA.pem")
+        self._ca_key: Path = Path(dir, "rootCA.key")
 
-        self._serial: Path = Path(root_dir, "serial")
-        self._index: Path = Path(root_dir, "index.txt")
+        self._serial: Path = Path(dir, "serial")
+        self._index: Path = Path(dir, "index.txt")
 
     def setup(self, force: bool = False):
         """

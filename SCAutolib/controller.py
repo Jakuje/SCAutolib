@@ -36,21 +36,23 @@ class Controller:
         :return:
         """
 
+        # Check params
+
         # Parse config file
         self._lib_conf_path = config.absolute() if isinstance(config, Path) \
             else Path(config).absolute()
 
+        # Validate values in config
         with self._lib_conf_path.open("r") as f:
             self.lib_conf = yaml.load(f, Loader=yaml.FullLoader)
             assert self.lib_conf, "Data are not loaded correctly."
+        self.lib_conf = self._validate_schema(params)
 
-        self._validate_schema(params)
-
-        # Validate values in config
-
-        # Check params
-
-        # Create required CAs
+        # Create CA's objects
+        if "ipa" in self.lib_conf["ca"].keys():
+            self.ipa_ca = CA.IPAServerCA(**self.lib_conf["ca"]["ipa"])
+        if "local_ca" in self.lib_conf["ca"].keys():
+            self.local_ca = CA.LocalCA(**self.lib_conf["ca"]["local_ca"])
 
         # Initialize users (just objects without real creation in the system)
         # Initialize cards along with users
@@ -58,7 +60,7 @@ class Controller:
 
     def setup_system(self):
         """
-        This method would setup whole system for smart card testing.
+        This method would set up whole system for smart card testing.
         """
 
         # Update SSSD with values for local users
@@ -151,4 +153,4 @@ class Controller:
                          "ca": schema_cas,
                          "users": [schema_user]})
 
-        schema.validate(self.lib_conf)
+        return schema.validate(self.lib_conf)

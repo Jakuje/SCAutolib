@@ -1,33 +1,54 @@
+import yaml
+from pathlib import Path
+from schema import Schema, Use, Or, And, Optional
+from shutil import rmtree
 from typing import Union
 
-import yaml
-from shutil import rmtree
-
 from SCAutolib import logger, run
-from SCAutolib.models import CA
-from pathlib import Path
+from SCAutolib.exceptions import SCAutolibException
+from SCAutolib.models import CA, authselect, file, user
 
 
 class Controller:
-    authselect = None
-    sssd_conf = None
-    lib_conf: yaml.YAMLObject = None
+    authselect: authselect.Authselect = authselect.Authselect()
+    sssd_conf: file.SSSDConf = file.SSSDConf()
+    lib_conf = None
+    _lib_conf_path: Path = None
     local_ca: CA.LocalCA = None
-    ipa_ca = None
-    users: dict = None
+    ipa_ca: CA.IPAServerCA = None
+    users: [user.User] = None
 
-    def __int__(self, config: Union[Path, str], params: []):
+    def __init__(self, config: Union[Path, str], params: {}):
+        """
+        Constructor will parse and check input configuration file. If some
+        required fields in the configuration are missing, CLI parameters
+        would be checked if missing values are there. If not, an exception
+        would be raised. After parsing the configuration file and filling
+        internal values of the Controller object, other related objects (users,
+        cards, CAs, Authselect, etc.) would be initialised, but any real action
+        that would affect the system
+        wouldn't be made.
+
+        :param config: Path to configuration file with metadata for testing.
+        :type config: pathlib.Path or str
+        :param params: Parameters from CLI
+        :type params: dict
+        :return:
+        """
+
         # Parse config file
-        with open(config, "r") as file:
-            self.lib_conf = yaml.load(file, Loader=yaml.FullLoader)
+        self._lib_conf_path = config.absolute() if isinstance(config, Path) \
+            else Path(config).absolute()
+
+        with self._lib_conf_path.open("r") as f:
+            self.lib_conf = yaml.load(f, Loader=yaml.FullLoader)
             assert self.lib_conf, "Data are not loaded correctly."
-        self._check_required_fields()
+
+        self._validate_schema(params)
+
         # Validate values in config
 
         # Check params
-
-        # Create object for SSSD
-        # Create object for Authselect
 
         # Create required CAs
 
@@ -89,20 +110,45 @@ class Controller:
     def cleanup(self):
         ...
 
-    def _check_required_fields(self):
+    def _validate_schema(self, params: {}):
         """
-        Check if all required fields are present in the config file. Warn user
-        if some fields are missing.
+        Validate schema of the configuration file. If some value doesn't present
+        in the config file, this value would be looked in the CLI parameters
+
+        :param params: CLI arguments
+        :return:
         """
-        result = True
-        fields = ("root_passwd", "ca_dir", "ipa_server_root",
-                  "ipa_server_hostname", "ipa_client_hostname", "ipa_domain",
-                  "ipa_realm", "ipa_server_admin_passwd", "local_user", "ipa_user")
-        config_fields = self.lib_conf.keys()
-        for f in fields:
-            if f not in config_fields:
-                logger.warning(f"Field {f} is not present in the config.")
-                result = False
-        if result:
-            logger.info("Configuration file is OK.")
-        return result
+        # FIXME: no schema requires all values to be in the config file, and
+        #  only IP address of IPA server is accepted from CLI arguments.
+        # IP regex
+        # Specify validation schema for CAs
+        schema_cas = Schema(And(
+            Use(dict),
+            lambda l: 1 <= len(l.keys()) <= 2,
+            {Optional("local_ca"): {"dir": Use(Path)},
+             Optional("ipa"): {
+                 'admin_passwd': Use(str),
+                 'root_passwd': Use(str),
+                 Optional('ip_addr', default=params["ip_addr"]): Use(str),
+                 'server_hostname': Use(str),
+                 'client_hostname': Use(str),
+                 'domain': Use(str),
+                 'realm': Use(str.upper)}}),
+            ignore_extra_keys=True)
+
+        # Specify validation schema for all users
+        schema_user = Schema({'name': Use(str),
+                              'passwd': Use(str),
+                              'pin': Use(str),
+                              'card_dir': Use(Path),
+                              'card_type': Or("virtual", "real", "removinator"),
+                              Optional('cert'): Use(Path),
+                              Optional('key'): Use(Path),
+                              'local': Use(bool)})
+
+        # Specify general schema for whole config file
+        schema = Schema({"root_passwd": Use(str),
+                         "ca": schema_cas,
+                         "users": [schema_user]})
+
+        schema.validate(self.lib_conf)

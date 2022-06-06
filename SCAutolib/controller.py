@@ -5,14 +5,14 @@ from shutil import rmtree
 from typing import Union
 
 from SCAutolib import logger, run
-from SCAutolib.exceptions import SCAutolibException
-from SCAutolib.models import CA, authselect, file, user
+from SCAutolib.models import CA, authselect, file, user, card
+import json
 
 
 class Controller:
-    authselect: authselect.Authselect = authselect.Authselect()
+    # authselect: authselect.Authselect = authselect.Authselect()
     sssd_conf: file.SSSDConf = file.SSSDConf()
-    lib_conf = None
+    lib_conf: dict = None
     _lib_conf_path: Path = None
     local_ca: CA.LocalCA = None
     ipa_ca: CA.IPAServerCA = None
@@ -43,8 +43,11 @@ class Controller:
             else Path(config).absolute()
 
         # Validate values in config
+        # with self._lib_conf_path.open("r") as f:
+        #     print(f.read())
+
         with self._lib_conf_path.open("r") as f:
-            self.lib_conf = yaml.load(f, Loader=yaml.FullLoader)
+            self.lib_conf = json.load(f)
             assert self.lib_conf, "Data are not loaded correctly."
         self.lib_conf = self._validate_schema(params)
 
@@ -52,11 +55,40 @@ class Controller:
         if "ipa" in self.lib_conf["ca"].keys():
             self.ipa_ca = CA.IPAServerCA(**self.lib_conf["ca"]["ipa"])
         if "local_ca" in self.lib_conf["ca"].keys():
-            self.local_ca = CA.LocalCA(**self.lib_conf["ca"]["local_ca"])
+            ca_dir = self.lib_conf["ca"]["local_ca"]["dir"]
+            cnf = file.OpensslCnf(ca_dir, "CA", str(ca_dir))
+            # FIXME: cnf.create()
+            self.local_ca = CA.LocalCA(cnf=cnf, dir=ca_dir)
 
         # Initialize users (just objects without real creation in the system)
+        for u in self.lib_conf["users"]:
+            cls = user.User if u["local"] else user.IPAUser
+            new_user = cls(username=u["name"], pin=u["pin"],
+                           password=u["passwd"], card_dir=u["card_dir"],
+                           cert=u["cert"], key=u["key"])
+            # FIXME: think about IPA user CSR
+            new_user.cnf = file.OpensslCnf(new_user.card_dir, "user",
+                                           new_user.username)
+            if u["card_type"] == "virtual":
+                hsm_conf = file.SoftHSM2Conf(filepath=new_user.card_dir,
+                                             card_dir=new_user.card_dir)
+                new_user.card = card.VirtualCard(softhsm2_conf=hsm_conf.path)
+
+            self.users.append(new_user)
+
         # Initialize cards along with users
         ...
+
+    def prepare(self):
+        """
+        Method for setting up whole system based on configuration file and CLI commands
+        :return:
+        """
+        ...
+
+    @property
+    def conf_path(self):
+        return self._lib_conf_path
 
     def setup_system(self):
         """
@@ -66,9 +98,12 @@ class Controller:
         # Update SSSD with values for local users
         ...
 
-    def setup_local_ca(self):
+    def setup_local_ca(self, force: bool = False):
         # Create directory structure for CA
+        self.local_ca.cnf.create()
+        self.local_ca.cnf.save()
 
+        self.local_ca.setup(force)
         # Generate certificates
         # self.local_ca.create()
         ...
@@ -142,10 +177,10 @@ class Controller:
         schema_user = Schema({'name': Use(str),
                               'passwd': Use(str),
                               'pin': Use(str),
-                              'card_dir': Use(Path),
+                              Optional('card_dir', default=None): Use(Path),
                               'card_type': Or("virtual", "real", "removinator"),
-                              Optional('cert'): Use(Path),
-                              Optional('key'): Use(Path),
+                              Optional('cert', default=None): Use(Path),
+                              Optional('key', default=None): Use(Path),
                               'local': Use(bool)})
 
         # Specify general schema for whole config file

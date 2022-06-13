@@ -1,4 +1,6 @@
-import yaml
+import json
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from pathlib import Path
 from schema import Schema, Use, Or, And, Optional
 from shutil import rmtree
@@ -17,6 +19,10 @@ class Controller:
     local_ca: CA.LocalCA = None
     ipa_ca: CA.IPAServerCA = None
     users: [user.User] = None
+
+    @property
+    def conf_path(self):
+        return self._lib_conf_path
 
     def __init__(self, config: Union[Path, str], params: {}):
         """
@@ -115,16 +121,76 @@ class Controller:
         Configure the user on the specified system (local machine/CA). The user
         would be configured along with the card based on configurations.
 
-    def setup_ipa_ca(self):
-        # Setup IPA client on the system
-        # Update values in the self.sssd_conf
-        # self.ipa_ca.create()
-        ...
+        :param user_dict:
+        :return:
+        """
+        if user_dict["local"]:
+            new_user = user.User(username=user_dict["name"],
+                                 pin=user_dict["pin"],
+                                 password=user_dict["passwd"],
+                                 card_dir=user_dict["card_dir"],
+                                 cert=user_dict["cert"], key=user_dict["key"])
 
-    def setup_user(self, username):
-        # Add user to the corresponding system
-        # Request certificates
-        # Add certs to the user
+        else:
+            if self.ipa_ca is None:
+                msg = "Can't proceed in configuration of IPA user because no " \
+                      "IPA Client is configured"
+                raise SCAutolibException(msg)
+            new_user = user.IPAUser(ipa_server=self.ipa_ca,
+                                    username=user_dict["name"],
+                                    pin=user_dict["pin"],
+                                    password=user_dict["passwd"],
+                                    card_dir=user_dict["card_dir"],
+                                    cert=user_dict["cert"],
+                                    key=user_dict["key"])
+
+        new_user.add_user()
+        new_card = None
+
+        if user_dict["card_type"] == "virtual":
+            hsm_conf = file.SoftHSM2Conf(new_user.card_dir, new_user.card_dir)
+            hsm_conf.create()
+
+            new_card = card.VirtualCard()
+            new_card.softhsm2_conf = hsm_conf
+        else:
+            raise NotImplementedError("Other card type than 'virtual' does not "
+                                      "supported yet")
+
+        new_user.card = new_card
+        self.users.append(new_user)
+
+    def enroll_card(self, user_: user.User):
+        """
+        Enroll the card of a given user with configured CA. If private key
+        and/or the certificate are not exists, new one's would be requested
+        from corresponding CA.
+
+        :param user_: User with a card to be enrolled.
+        """
+        if not user_.card:
+            raise SCAutolibException(f"Card for the user {user_.username} does "
+                                     f"not initialized")
+        if user_.cert is None:
+            # Creating a new private key makes sense only if the certificate
+            # doesn't exist yet
+            if user_.key is None:
+                user_.key = user_.card_dir.joinpath("private.key")
+                self._gen_private_key(user_.key)
+
+            csr = user_.gen_csr()
+            if user_.cert is None:
+                user_.cert = user_.card_dir.joinpath(
+                    f"cert-{user_.username}.pem")
+
+            if isinstance(user_, user.IPAUser):
+                self.ipa_ca.request_cert(csr, user_.username, user_.cert)
+            else:
+                self.local_ca.request_cert(csr, user_.username, user_.cert)
+
+        user_.card.enroll()
+
+    def cleanup(self):
         ...
 
     def _general_steps_for_virtual_sc(self):
@@ -151,8 +217,19 @@ class Controller:
         run("systemctl daemon-reload")
         run("systemctl restart pcscd sssd")
 
-    def cleanup(self):
-        ...
+    def _gen_private_key(self, key_path: Path):
+        """
+        Generate RSA private key to specified location.
+
+        :param key_path: path to output certificate
+        """
+        key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
+
+        with key_path.open("wb") as f:
+            f.write(key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.NoEncryption()))
 
     def _validate_schema(self, params: {}):
         """

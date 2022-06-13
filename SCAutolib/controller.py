@@ -92,8 +92,28 @@ class Controller:
 
         self.local_ca.setup(force)
         # Generate certificates
-        # self.local_ca.create()
-        ...
+
+    def setup_ipa_ca(self, force: bool = False):
+        """
+        Configure IPA client for given IPA server on current host. IPA server
+        should be already up and running for correct configuration of the IPA
+        client
+
+        :param force: If IPA Client is already configured on the system,
+            specifies if it should be removed before configuring a new client.
+        :type force: bool
+        :raises: SCAutolib.exceptions.SCAutolibWrongConfig
+        """
+        if "ipa" not in self.lib_conf["ca"].keys():
+            msg = "Section for IPA is not found in the configuration file"
+            raise SCAutolibWrongConfig(msg)
+        self.ipa_ca = CA.IPAServerCA(**self.lib_conf["ca"]["ipa"])
+        self.ipa_ca.setup(force=force)
+
+    def setup_user(self, user_dict):
+        """
+        Configure the user on the specified system (local machine/CA). The user
+        would be configured along with the card based on configurations.
 
     def setup_ipa_ca(self):
         # Setup IPA client on the system

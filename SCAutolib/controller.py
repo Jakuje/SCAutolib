@@ -5,8 +5,8 @@ from shutil import rmtree
 from typing import Union
 
 from SCAutolib import logger, run
-from SCAutolib.models import CA, authselect, file, user, card
-import json
+from SCAutolib.exceptions import SCAutolibWrongConfig, SCAutolibException
+from SCAutolib.models import CA, file, user, card
 
 
 class Controller:
@@ -67,7 +67,26 @@ class Controller:
         ...
 
     def setup_local_ca(self, force: bool = False):
-        # Create directory structure for CA
+        """
+        Setup local CA based on configuration from the configuration file. All
+        necessary file for this operation (e.g. CNF file for self-signed root
+        certificate) would be created along the way.
+
+        :param force: If local CA already exists in given directory, specifies
+            if it should be overwritten
+        :type force: bool
+        :raises: SCAutolib.exceptions.SCAutolibWrongConfig
+        """
+
+        if "local_ca" not in self.lib_conf["ca"].keys():
+            msg = "Section for local CA is not found in the configuration file"
+            raise SCAutolibWrongConfig(msg)
+
+        ca_dir = self.lib_conf["ca"]["local_ca"]["dir"]
+        ca_dir.mkdir(exist_ok=True)
+        cnf = file.OpensslCnf(ca_dir, "CA", str(ca_dir))
+
+        self.local_ca = CA.LocalCA(dir=ca_dir, cnf=cnf,)
         self.local_ca.cnf.create()
         self.local_ca.cnf.save()
 

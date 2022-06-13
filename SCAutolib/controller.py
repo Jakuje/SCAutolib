@@ -42,42 +42,10 @@ class Controller:
         self._lib_conf_path = config.absolute() if isinstance(config, Path) \
             else Path(config).absolute()
 
-        # Validate values in config
-        # with self._lib_conf_path.open("r") as f:
-        #     print(f.read())
-
         with self._lib_conf_path.open("r") as f:
             self.lib_conf = json.load(f)
             assert self.lib_conf, "Data are not loaded correctly."
         self.lib_conf = self._validate_schema(params)
-
-        # Create CA's objects
-        if "ipa" in self.lib_conf["ca"].keys():
-            self.ipa_ca = CA.IPAServerCA(**self.lib_conf["ca"]["ipa"])
-        if "local_ca" in self.lib_conf["ca"].keys():
-            ca_dir = self.lib_conf["ca"]["local_ca"]["dir"]
-            cnf = file.OpensslCnf(ca_dir, "CA", str(ca_dir))
-            # FIXME: cnf.create()
-            self.local_ca = CA.LocalCA(cnf=cnf, dir=ca_dir)
-
-        # Initialize users (just objects without real creation in the system)
-        for u in self.lib_conf["users"]:
-            cls = user.User if u["local"] else user.IPAUser
-            new_user = cls(username=u["name"], pin=u["pin"],
-                           password=u["passwd"], card_dir=u["card_dir"],
-                           cert=u["cert"], key=u["key"])
-            # FIXME: think about IPA user CSR
-            new_user.cnf = file.OpensslCnf(new_user.card_dir, "user",
-                                           new_user.username)
-            if u["card_type"] == "virtual":
-                hsm_conf = file.SoftHSM2Conf(filepath=new_user.card_dir,
-                                             card_dir=new_user.card_dir)
-                new_user.card = card.VirtualCard(softhsm2_conf=hsm_conf.path)
-
-            self.users.append(new_user)
-
-        # Initialize cards along with users
-        ...
 
     def prepare(self):
         """

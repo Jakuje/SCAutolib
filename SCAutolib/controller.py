@@ -1,163 +1,14 @@
 import json
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from enum import Enum
 from pathlib import Path
 from schema import Schema, Use, Or, And, Optional
 from shutil import rmtree
 from typing import Union
 
-from SCAutolib import logger, run, TEMPLATES_DIR
+from SCAutolib import logger, run
 from SCAutolib.exceptions import SCAutolibWrongConfig, SCAutolibException
 from SCAutolib.models import CA, file, user, card
-
-
-class OSVersion(Enum):
-    """
-    Enumeration for Linux versions. Used for more convenient checks.
-    """
-    Fedora = 1
-    RHEL_9 = 2
-    RHEL_8 = 3
-
-
-def _check_selinux():
-    """
-    Checks if specific SELinux module for virtual smart card is installed.
-    This is implemented be checking the hardcoded name for the module
-    (virtcacard) to be present in the list of SELinux modules. If this name is
-    not present in the list, then virtcacard.cil file would be created in conf
-    or subdirectory in the CA directory specified by the configuration file.
-    """
-    result = run("semodule -l", print_=False)
-    if "virtcacard" not in result.stdout:
-        logger.debug(
-            "SELinux module for virtual smart cards is not present in the "
-            "system. Installing...")
-
-        run(["semodule", "-i", f"{TEMPLATES_DIR}/virtcacard.cil"])
-
-        run(["systemctl", "restart", "pcscd"])
-        logger.debug("pcscd service is restarted")
-
-    logger.debug(
-        "SELinux module for virtual smart cards is installed")
-
-
-def _gen_private_key(key_path: Path):
-    """
-    Generate RSA private key to specified location.
-
-    :param key_path: path to output certificate
-    """
-    key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
-
-    with key_path.open("wb") as f:
-        f.write(key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.TraditionalOpenSSL,
-            encryption_algorithm=serialization.NoEncryption()))
-
-
-def _general_steps_for_virtual_sc():
-    """
-    Prepare the system for virtual smart card
-    """
-
-    _check_selinux()
-
-    with open("/usr/lib/systemd/system/pcscd.service", "r+") as f:
-        data = f.read().replace("--auto-exit", "")
-        f.write(data)
-
-    with open("/usr/share/p11-kit/modules/opensc.module", "r+") as f:
-        data = f.read()
-        if "disable-in: virt_cacard" not in data:
-            f.write("disable-in: virt_cacard\n")
-            logger.debug("opensc.module is updated")
-
-    run(['systemctl', 'stop', 'pcscd.service', 'pcscd.socket', 'sssd'])
-    rmtree("/var/lib/sss/mc/*", ignore_errors=True)
-    rmtree("/var/lib/sss/db/*", ignore_errors=True)
-    logger.debug(
-        "Directories /var/lib/sss/mc/ and /var/lib/sss/db/ removed")
-
-    run("systemctl daemon-reload")
-    run("systemctl restart pcscd sssd")
-
-    run("dnf -y copr enable jjelen/vsmartcard")
-    logger.debug("Copr repo for virt_cacard is enabled")
-
-    return ["pcsc-lite-ccid", "pcsc-lite", "virt_cacard",
-            "vpcd", "softhsm"]
-
-
-def _get_os_version():
-    """
-    Find Linux version. Available version: RHEL 8, RHEL 9, Fedora.
-    :return: Enum with OS version
-    """
-    with open('/etc/redhat-release', "r") as f:
-        cnt = f.read()
-
-    if "Red Hat Enterprise Linux release 9" in cnt:
-        return OSVersion.RHEL_9
-    elif "Red Hat Enterprise Linux release 8" in cnt:
-        return OSVersion.RHEL_8
-    else:
-        return OSVersion.Fedora
-
-
-def _install_packages(packages):
-    """
-    Install given packages and log package version
-
-    :param packages: list of packages to be installed
-    """
-    for pkg in packages:
-        logger.warning(f"Package {pkg} is not installed on the "
-                       f"system. Installing...")
-        run(f"dnf install {pkg} -y")
-        pkg = run(["rpm", "-qa", pkg]).stdout
-        logger.debug(f"Package {pkg} is installed")
-
-
-def _check_packages(packages):
-    """
-    Find missing packages
-
-    :param packages: list of required packages
-    :type packages: list
-    :return: list of missing packages
-    """
-    missing = []
-    for pkg in packages:
-        out = run(["rpm", "-qa", pkg])
-        if pkg not in out.stdout:
-            logger.warning(f"Package {pkg} is required for the testing, "
-                           f"but doesn't present in the system")
-            missing.append(pkg)
-        else:
-            logger.debug(f"Package {out.stdout.strip()} is present")
-    return missing
-
-
-def _general_steps_for_ipa():
-    """
-    General system preparation for installing IPA client on RHEL/Fedora
-
-    :return: name of the IPA client package for current Linux
-    """
-    os_version = _get_os_version()
-    if os_version != OSVersion.RHEL_9:
-        run("dnf module enable -y idm:DL1")
-        run("dnf install @idm:DL1 -y")
-        logger.debug("idm:DL1 module is installed")
-
-    if os_version == OSVersion.Fedora:
-        return ["freeipa-client"]
-    else:
-        return ["ipa-client"]
+from SCAutolib.utils import OSVersion, _check_selinux, _gen_private_key, _get_os_version, _install_packages, \
+    _check_packages
 
 
 class Controller:
@@ -200,7 +51,7 @@ class Controller:
         with self._lib_conf_path.open("r") as f:
             self.lib_conf = json.load(f)
             assert self.lib_conf, "Data are not loaded correctly."
-        self.lib_conf = self._validate_schema(params)
+        self.lib_conf = self._validate_configuration(params)
 
     def prepare(self):
         """
@@ -377,7 +228,7 @@ class Controller:
     def cleanup(self):
         ...
 
-    def _validate_schema(self, params: {}):
+    def _validate_configuration(self, params: {}):
         """
         Validate schema of the configuration file. If some value doesn't present
         in the config file, this value would be looked in the CLI parameters

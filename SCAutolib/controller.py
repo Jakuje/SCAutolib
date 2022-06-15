@@ -81,11 +81,11 @@ class Controller:
 
         # Prepare for virtual cards
         if "virtual" in [u["card_type"] for u in self.lib_conf["users"]]:
-            packages += _general_steps_for_virtual_sc()
+            packages += self._general_steps_for_virtual_sc()
 
         # Add IPA packages if needed
         if not all([u["local"] for u in self.lib_conf["users"]]):
-            packages += _general_steps_for_ipa()
+            packages += self._general_steps_for_ipa()
 
         # Check for installed packages
         missing = _check_packages(packages)
@@ -273,3 +273,57 @@ class Controller:
                          "users": [schema_user]})
 
         return schema.validate(self.lib_conf)
+
+    @staticmethod
+    def _general_steps_for_virtual_sc():
+        """
+        Prepare the system for virtual smart card. Preparation means to
+        configure pcscd service and opensc module to be able correctly working
+        with virtual smart card. Also, repository for installing virt_cacard
+        package is added in this method.
+        """
+
+        _check_selinux()
+
+        with open("/usr/lib/systemd/system/pcscd.service", "r+") as f:
+            data = f.read().replace("--auto-exit", "")
+            f.write(data)
+
+        with open("/usr/share/p11-kit/modules/opensc.module", "r+") as f:
+            data = f.read()
+            if "disable-in: virt_cacard" not in data:
+                f.write("disable-in: virt_cacard\n")
+                logger.debug("opensc.module is updated")
+
+        run(['systemctl', 'stop', 'pcscd.service', 'pcscd.socket', 'sssd'])
+        rmtree("/var/lib/sss/mc/*", ignore_errors=True)
+        rmtree("/var/lib/sss/db/*", ignore_errors=True)
+        logger.debug(
+            "Directories /var/lib/sss/mc/ and /var/lib/sss/db/ removed")
+
+        run("systemctl daemon-reload")
+        run("systemctl restart pcscd sssd")
+
+        run("dnf -y copr enable jjelen/vsmartcard")
+        logger.debug("Copr repo for virt_cacard is enabled")
+
+        return ["pcsc-lite-ccid", "pcsc-lite", "virt_cacard",
+                "vpcd", "softhsm"]
+
+    @staticmethod
+    def _general_steps_for_ipa():
+        """
+        General system preparation for installing IPA client on RHEL/Fedora
+
+        :return: name of the IPA client package for current Linux
+        """
+        os_version = _get_os_version()
+        if os_version != OSVersion.RHEL_9:
+            run("dnf module enable -y idm:DL1")
+            run("dnf install @idm:DL1 -y")
+            logger.debug("idm:DL1 module is installed")
+
+        if os_version == OSVersion.Fedora:
+            return ["freeipa-client"]
+        else:
+            return ["ipa-client"]

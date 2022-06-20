@@ -44,8 +44,8 @@ class User:
         self.pin = pin
         self._card = card
         self._cnf = cnf
-        self._key = key
-        self._cert = cert
+        self._keys = [key]
+        self._certs = [cert]
         self.card_dir = None
 
     @property
@@ -66,33 +66,41 @@ class User:
 
     @property
     def key(self):
-        return self._key
+        return self._keys[0]
 
     @key.setter
     def key(self, key: Path):
         logger.warning("Make sure to remove the existing key/cert "
                        "pairs before adding a new one.")
-        self._key = key
+        self._keys.append(key)
 
     @key.deleter
     def key(self):
         logger.info("Deleting the current user key.")
-        self._key = None
+        self._keys = ()
+
+    @property
+    def keys(self):
+        return self._keys
 
     @property
     def cert(self):
-        return self._cert
+        return self._certs[0]
 
     @cert.setter
     def cert(self, cert: Path):
         logger.warning("Make sure to remove the existing key/cert "
                        "pairs before adding a new one.")
-        self._cert = cert
+        self._certs.append(cert)
 
     @cert.deleter
     def cert(self):
         logger.info("Deleting the current user cert.")
-        self._cert = None
+        self._certs = ()
+
+    @property
+    def certs(self):
+        return self._certs
 
     @property
     def cnf(self):

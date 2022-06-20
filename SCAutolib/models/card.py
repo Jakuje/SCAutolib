@@ -65,6 +65,7 @@ class VirtualCard(Card):
     Card root directory has to be created before calling any method
     """
 
+    _cert_id = 0
     _service_name: str = None
     _service_location: Path = None
     _softhsm2_conf: Path = None
@@ -92,7 +93,7 @@ class VirtualCard(Card):
         assert self.user.card_dir.exists(), "Card root directory doesn't exists"
 
         self._private_key = self.user.key
-        self._cert = self.user.cert
+        self._certs = self.user.certs
 
         self._service_name = f"virt-sc-{self.user.username}"
         self._service_location = Path(
@@ -163,24 +164,8 @@ class VirtualCard(Card):
         return out
 
     def enroll(self):
-        """
-        Upload certificate and private key to the virtual smart card (upload to
-        NSS database) with pkcs11-tool.
-        """
-        cmd = ["pkcs11-tool", "--module", "libsofthsm2.so", "--slot-index",
-               '0', "-w", self._private_key, "-y", "privkey", "--label",
-               f"'{self.user.username}'", "-p", self.user.pin, "--set-id", "0",
-               "-d", "0"]
-        run(cmd, env={"SOFTHSM2_CONF": self._softhsm2_conf})
-        logger.debug(
-            f"User key {self._private_key} is added to virtual smart card")
-
-        cmd = ['pkcs11-tool', '--module', 'libsofthsm2.so', '--slot-index', "0",
-               '-w', self._cert, '-y', 'cert', '-p', self.user.pin,
-               '--label', f"'{self.user.username}'", '--set-id', "0", '-d', "0"]
-        run(cmd, env={"SOFTHSM2_CONF": self._softhsm2_conf})
-        logger.debug(
-            f"User certificate {self._cert} is added to virtual smart card")
+        for cert in self._certs:
+            self.enroll_cert(cert)
 
         # To get URI of the card, the card has to be inserted
         # Virtual smart card can't be started without a cert and a key uploaded
@@ -188,6 +173,29 @@ class VirtualCard(Card):
         with self:
             self.insert()
             self._set_uri()
+
+    def enroll_cert(self, cert):
+        """
+        Upload certificate and private key to the virtual smart card (upload to
+        NSS database) with pkcs11-tool.
+        """
+        cmd = ["pkcs11-tool", "--module", "libsofthsm2.so", "--slot-index",
+               '0', "-w", cert.private_key, "-y", "privkey", "--label",
+               f"'{self.user.username}'", "-p", self.user.pin, "--set-id", self._cert_id,
+               "-d", "0"]
+        run(cmd, env={"SOFTHSM2_CONF": self._softhsm2_conf})
+        logger.debug(
+            f"User key {self._private_key} is added to virtual smart card with ID {self._cert_id}")
+
+        cmd = ['pkcs11-tool', '--module', 'libsofthsm2.so', '--slot-index', "0",
+               '-w', self._cert, '-y', 'cert', '-p', self.user.pin,
+               '--label', f"'{self.user.username}'", '--set-id', self._cert_id, '-d', "0"]
+        run(cmd, env={"SOFTHSM2_CONF": self._softhsm2_conf})
+        logger.debug(
+            f"User certificate {self._cert} is added to virtual smart card with ID {self._cert_id}")
+
+        self._cert_id += 1
+
 
     def create(self):
         """
